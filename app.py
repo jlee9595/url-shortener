@@ -27,8 +27,6 @@ def list_statistics():
 	conn = sqlite3.connect('database.db')
 	c = conn.cursor()
 	rows = c.execute("SELECT * FROM urls")
-	conn.close()
-
 	output = []
 	for row in rows:
 		output.append(OrderedDict([
@@ -40,6 +38,8 @@ def list_statistics():
 			("mobile_redirects", row[3]), 
 			("tablet_url", row[4]), 
 			("tablet_redirects", row[5])]))
+
+	conn.close()
 	return Response(json.dumps(output), mimetype='application/json')
 
 

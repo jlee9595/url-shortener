@@ -1,6 +1,6 @@
 # url-shortener
 
-Basic URL shortening application that tracks basic statistics such as device, times redirected and time since creation
+Basic URL shortening application that tracks basic statistics such as device, times redirected, and time since creation
 
 ###Prerequisites
 - Python 2

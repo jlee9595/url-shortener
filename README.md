@@ -9,8 +9,12 @@ Basic URL shortening application that tracks basic statistics such as device, ti
 ###To run locally
 1. Clone repository
 2. `cd url-shortener`
-2. `pip install -r requirements.txt`
-3. `python app.py`
+3. Create virtual environment (optional)
+4. `pip install --editable .`
+5. `export FLASK_APP=url_shortener`
+6. `flask initdb`
+7. `flask run`
+8. To test: `python setup.py test`
 
 To shorten a url, try something like this:
 `curl -d '{"url": "reddit.com/r/jokes"}' -H 'Content-Type: application/json' http://127.0.0.1:5000/`

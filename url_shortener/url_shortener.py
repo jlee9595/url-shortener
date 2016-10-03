@@ -1,32 +1,48 @@
-from flask import Flask, request, abort, jsonify, redirect, Response
+from flask import Flask, request, abort, jsonify, redirect, Response, g
 from datetime import datetime
 from collections import OrderedDict
 import sqlite3
 import json
+import os
 
 app = Flask(__name__)
 
+app.config.update(dict(
+	DATABASE = os.path.join(app.root_path, 'database.db')
+))
+
 mapping = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-conn = sqlite3.connect('database.db')
-c = conn.cursor()
-c.execute('''CREATE TABLE IF NOT EXISTS urls (
-	desktop_url text, 
-	desktop_redirects int, 
-	mobile_url text, 
-	mobile_redirects int, 
-	tablet_url text, 
-	tablet_redirects int, 
-	shortened text, 
-	created text)''')
-conn.commit()
-conn.close()
+"""DATABASE SETUP"""
+
+def init_db():
+    db = get_db()
+    with app.open_resource('schema.sql', mode='r') as f:
+        db.cursor().executescript(f.read())
+    db.commit()
+
+@app.cli.command('initdb')
+def initdb_command():
+    init_db()
+    print 'Initialized the database.'
+
+def get_db():
+    if not hasattr(g, 'sqlite_db'):
+        g.sqlite_db = sqlite3.connect(app.config['DATABASE'])
+    return g.sqlite_db
+
+@app.teardown_appcontext
+def close_db(error):
+    if hasattr(g, 'sqlite_db'):
+        g.sqlite_db.close()
+
+
+"""APPLICATION"""
 
 @app.route("/")
 def list_statistics():
-	conn = sqlite3.connect('database.db')
-	c = conn.cursor()
-	rows = c.execute("SELECT * FROM urls")
+	db = get_db()
+	rows = db.execute("SELECT * FROM urls")
 	output = []
 	for row in rows:
 		output.append(OrderedDict([
@@ -38,76 +54,63 @@ def list_statistics():
 			("mobile_redirects", row[3]), 
 			("tablet_url", row[4]), 
 			("tablet_redirects", row[5])]))
-
-	conn.close()
 	return Response(json.dumps(output), mimetype='application/json')
 
 
 @app.route("/", methods=["POST"])
 def shorten_url():
-    parsed = request.get_json()
-    if not "url" in parsed:
+    if not request.is_json or not "url" in request.get_json():
     	abort(403)
+
+    parsed = request.get_json()
 
     url = parsed["url"]
     if url[0:4] != "http":
     	url = "http://" + url
+
     desktop_url = parsed["desktop_url"] if "desktop_url" in parsed else url
     mobile_url = parsed["mobile_url"] if "mobile_url" in parsed else url
     tablet_url = parsed["tablet_url"] if "tablet_url" in parsed else url
 
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute('''
+    db = get_db()
+    db.execute('''
     	INSERT INTO urls 
     	VALUES (?,0,?,0,?,0,null,?)''', 
     	(desktop_url, mobile_url, tablet_url, datetime.now().replace(microsecond=0)))
-
-    row_id = c.lastrowid
+    row_id = db.execute("SELECT Count(*) FROM urls").fetchone()[0]
     shortened = to_shortened(row_id)
-    c.execute("UPDATE urls SET shortened=? WHERE rowid=?", (shortened, row_id))
-    conn.commit()
-    conn.close()
+    db.execute("UPDATE urls SET shortened=? WHERE rowid=?", (shortened, row_id))
+    db.commit()
 
     return jsonify(shortened_url=request.url_root+shortened), 201
 
 @app.route("/<shortened>")
 def direct_to_original(shortened):
-	conn = sqlite3.connect('database.db')
-	c = conn.cursor()
-	c.execute("SELECT Count(*) FROM urls")
-	num_rows = c.fetchone()[0]
-
+	db = get_db()
+	num_rows = db.execute("SELECT Count(*) FROM urls").fetchone()[0]
 	row_id = to_row_id(shortened)
 	if row_id > num_rows or row_id == 0:
-		conn.close()
 		abort(404)
 
 	platform = request.user_agent.platform
 	if platform == "android" or platform == "iphone":
-		c.execute('''
-			UPDATE urls 
-			SET mobile_redirects = mobile_redirects+1 
-			WHERE rowid=?''', (row_id,))
-		c.execute("SELECT mobile_url FROM urls WHERE rowid=?", (row_id,))
+		device = "mobile"
 	elif platform == "ipad":
-		c.execute('''
-			UPDATE urls 
-			SET tablet_redirects = tablet_redirects+1 
-			WHERE rowid=?''', (row_id,))
-		c.execute("SELECT tablet_url FROM urls WHERE rowid=?", (row_id,))
+		device = "tablet"
 	else:
-		c.execute('''
-			UPDATE urls 
-			SET desktop_redirects = desktop_redirects+1 
-			WHERE rowid=?''', (row_id,))
-		c.execute("SELECT desktop_url FROM urls WHERE rowid=?", (row_id,))
+		device = "desktop"
 
-	url=c.fetchone()[0]
-	conn.commit()
-	conn.close()
+	db.execute('''
+		UPDATE urls 
+		SET ''' + device + "_redirects = " + device + '''_redirects+1 
+		WHERE rowid=?''', (row_id,))
+	url = db.execute("SELECT " + device + "_url FROM urls WHERE rowid=?", (row_id,)).fetchone()[0]
 
+	db.commit()
 	return redirect(url)
+
+
+"""HELPER FUNCTIONS"""
 
 def to_row_id(shortened):
 	unmapped = []
@@ -145,4 +148,4 @@ def get_time_elapsed(time):
 	return str(now - datetime.strptime(time, "%Y-%m-%d %H:%M:%S") )
 
 if __name__ == "__main__":
-    app.run()
+    app.run(threaded=True)
